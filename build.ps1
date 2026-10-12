@@ -26,3 +26,29 @@ cl.exe /nologo /LD /MT /utf-8 /O2 /EHsc /std:c++17 /DUNICODE /D_UNICODE /D_CRT_S
 
 Write-Host ""
 Write-Host "Built: $dist\SqlColumnHighlighter.dll"
+
+# 3. 高亮逻辑端到端测试：伪造 Scintilla，直接驱动 analyse/highlight
+#    （/FI 把 ::SendMessage 重定向到测试里的 FakeSendMessage）
+Write-Host ""
+Write-Host "=== Running highlighter tests ==="
+cl.exe /nologo /EHsc /std:c++17 /utf-8 /D_CRT_SECURE_NO_WARNINGS `
+    /I "$src" /FI"$root\tests\fake_sci.h" `
+    "$root\tests\test_highlighter.cpp" "$src\Highlighter.cpp" `
+    /link /NOLOGO /OUT:"$dist\test_highlighter.exe"
+& "$dist\test_highlighter.exe"
+if ($LASTEXITCODE -ne 0) { throw "highlighter tests failed" }
+
+# 4. DLL 加载冒烟测试：验证导出的插件接口
+Write-Host ""
+Write-Host "=== Running DLL load test ==="
+cl.exe /nologo /EHsc /std:c++17 /utf-8 /D_CRT_SECURE_NO_WARNINGS `
+    "$root\tests\test_load.cpp" `
+    /link /NOLOGO /OUT:"$dist\test_load.exe"
+Push-Location $dist
+& .\test_load.exe
+$code = $LASTEXITCODE
+Pop-Location
+if ($code -ne 0) { throw "DLL load test failed" }
+
+Write-Host ""
+Write-Host "All tests passed."

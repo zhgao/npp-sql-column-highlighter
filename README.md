@@ -55,8 +55,12 @@ src/
                    (values verified against the official Notepad_plus_msgs.h)
   Scintilla.h      minimal Scintilla constants used
   version.rc       DLL version resource (1.0.0.0)
-build.ps1          local build script
-.github/workflows/build-and-release.yml   CI: build x86/x64, zip, release
+build.ps1          local build script (also compiles & runs the tests below)
+tests/
+  test_highlighter.cpp  end-to-end tests: fake Scintilla drives analyse/highlight
+  test_load.cpp         DLL load smoke test (exports, getName, getFuncsArray)
+  fake_sci.h            redirects ::SendMessage to the fake (via cl /FI)
+.github/workflows/build-and-release.yml   CI: build x86/x64, test, zip, release
 ```
 
 ## Submitting to Plugins Admin (nppPluginList)

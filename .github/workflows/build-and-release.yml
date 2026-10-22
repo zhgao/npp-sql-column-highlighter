@@ -17,7 +17,7 @@ jobs:
       matrix:
         arch: [x86, x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1

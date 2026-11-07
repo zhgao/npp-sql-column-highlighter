@@ -19,6 +19,15 @@ INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com');
 
 ## Changelog
 
+### v1.0.4 (2026-11-08)
+Version bump only — identical code to v1.0.3. v1.0.3 was never installed
+on the real machine, so the version was bumped to 1.0.4 for a clean
+first test of the fixed build. (Correction to the v1.0.3 note below:
+`SCI_GETTEXTRANGE` (2162) does **not** return the SQL in the SciTE DLL —
+it crashes inside Scintilla.dll at the same offset for every range, so
+the plugin does not use it at all; only `SCI_GETTEXT` was verified to
+return the exact SQL on real Windows.)
+
 ### v1.0.3 (2026-11-08)
 True root cause found, by checking our hand-written `src/Scintilla.h`
 against the official Scintilla 5.6.9 header: the v1.0.2 diagnose log
@@ -41,8 +50,10 @@ never matched, so double-click-to-highlight was dead as well). Fixes:
   used anywhere. `diagnose()` now reports `gettext-empty` if `SCI_GETTEXT`
   also comes back empty while the document is non-empty.
 - Verified on real Windows (GitHub Actions, real Scintilla 5.6.9 from
-  SciTE): the old number 2166 reproduces the all-`\x00` failure, the
-  corrected 2162 and `SCI_GETTEXT` both return the exact SQL.
+  SciTE): the old number 2166 reproduces the all-`\x00` failure, and
+  `SCI_GETTEXT` returns the exact SQL. `SCI_GETTEXTRANGE` (2162) was
+  not verified — it crashes inside Scintilla.dll at the same offset
+  for every range (see v1.0.4 note).
 
 ### v1.0.2 (2026-11-08)
 Real-device bug, continued: v1.0.1's log proved the notifications arrive and

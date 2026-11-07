@@ -23,6 +23,13 @@
 // 输出 + 崩溃过滤器打印异常码和故障地址，再跑就能定位崩到哪一步。
 // 崩的是复现程序本身，插件代码不在其中，不影响 v1.0.3 的结论。
 //
+// run #5 重跑（2026-11-08）：诊断生效，TEST1 通过——旧错号 2166 在
+// 真实 Windows 上确实读回 82 个 \x00，根因得证。但 TEST2（修正后的
+// SCI_GETTEXTRANGE 2162）在 Scintilla.dll 内部以 0xC0000005 崩溃，
+// 故障地址落在 Scintilla.dll 模块内，原因未明；TEST3 没跑到。
+// 之后改成先跑 TEST3（SCI_GETTEXT，v1.0.3 实际用的调用），再跑
+// TEST2 小范围（0..5），最后跑 TEST2 全范围，逐步定位。
+//
 // 编译（GitHub Actions windows-latest，MSVC）：
 //   cl /EHsc /I src tests\real_sci_repro.cpp user32.lib
 // 运行前把 Scintilla.dll 与 Lexilla.dll（SciTE 包 wscite/ 下）
@@ -153,8 +160,46 @@ int main() {
                t1ok ? "PASS" : "FAIL");
     }
 
-    // 2) 修正后的 SCI_GETTEXTRANGE（2162）：应取回确切 SQL，
-    // 证明结构体本身没错，错的只是消息号。
+    // 3) 先跑 SCI_GETTEXT（v1.0.3 实际用的调用）：run #5 里 TEST2
+    // 在 Scintilla.dll 内崩溃，TEST3 没跑到。GETTEXT 不用结构体，
+    // 是 v1.0.3 能不能交货的关键，先验证它。
+    printf("TEST3: sending SCI_GETTEXT...\n");
+    bool t3ok = false;
+    {
+        std::string buf((size_t)docLen + 1, '\0');
+        const LRESULT n = sci(sciWnd, SCI_GETTEXT, (WPARAM)(docLen + 1),
+                              (LPARAM)&buf[0]);
+        printf("SCI_GETTEXT returned %lld\n", (long long)n);
+        printEscaped("SCI_GETTEXT", buf.data(),
+                     n > 0 ? (size_t)n : 0);
+        t3ok = (n == docLen &&
+                buf.compare(0, (size_t)docLen, kSql, (size_t)docLen) == 0);
+        printf("TEST3 SCI_GETTEXT-returns-exact-SQL: %s\n",
+               t3ok ? "PASS" : "FAIL");
+    }
+
+    // 2a) 小范围 GETTEXTRANGE（0..5）：定位 run #5 的崩溃是结构性的
+    //（任何 GETTEXTRANGE 都崩）还是跟范围/内容有关。
+    printf("TEST2-small: sending SCI_GETTEXTRANGE(2162) range 0..5...\n");
+    bool t2sok = false;
+    {
+        std::string buf(6, '\0');
+        Sci_TextRange tr;
+        tr.chrg.cpMin = 0;
+        tr.chrg.cpMax = 5;
+        tr.lpstrText = &buf[0];
+        const LRESULT n =
+            sci(sciWnd, SCI_GETTEXTRANGE, 0, (LPARAM)&tr);
+        printf("SCI_GETTEXTRANGE(2162) range 0..5 returned %lld\n",
+               (long long)n);
+        printEscaped("SCI_GETTEXTRANGE-2162-small", buf.data(), 5);
+        t2sok = (n == 5 && buf.compare(0, 5, kSql, 5) == 0);
+        printf("TEST2-small corrected-GETTEXTRANGE-2162-range-0..5: %s\n",
+               t2sok ? "PASS" : "FAIL");
+    }
+
+    // 2b) 全范围 GETTEXTRANGE（2162）：应取回确切 SQL。
+    // run #5 在这一步于 Scintilla.dll 内崩溃（0xC0000005），原因未明。
     printf("TEST2: sending SCI_GETTEXTRANGE(2162)...\n");
     bool t2ok = false;
     {
@@ -173,27 +218,11 @@ int main() {
                t2ok ? "PASS" : "FAIL");
     }
 
-    // 3) 新方式：SCI_GETTEXT（v1.0.3 用的调用）。
-    printf("TEST3: sending SCI_GETTEXT...\n");
-    bool t3ok = false;
-    {
-        std::string buf((size_t)docLen + 1, '\0');
-        const LRESULT n = sci(sciWnd, SCI_GETTEXT, (WPARAM)(docLen + 1),
-                              (LPARAM)&buf[0]);
-        printf("SCI_GETTEXT returned %lld\n", (long long)n);
-        printEscaped("SCI_GETTEXT", buf.data(),
-                     n > 0 ? (size_t)n : 0);
-        t3ok = (n == docLen &&
-                buf.compare(0, (size_t)docLen, kSql, (size_t)docLen) == 0);
-        printf("TEST3 SCI_GETTEXT-returns-exact-SQL: %s\n",
-               t3ok ? "PASS" : "FAIL");
-    }
-
-    if (t1ok && t2ok && t3ok) {
+    if (t1ok && t2ok && t3ok && t2sok) {
         printf("RESULT: root cause confirmed (2166 was LINEFROMPOSITION, not GETTEXTRANGE) and v1.0.3 text retrieval works on real Windows\n");
         return 0;
     }
-    printf("RESULT: NOT all checks passed (t1=%d t2=%d t3=%d)\n",
-           (int)t1ok, (int)t2ok, (int)t3ok);
+    printf("RESULT: NOT all checks passed (t1=%d t2=%d t2small=%d t3=%d)\n",
+           (int)t1ok, (int)t2ok, (int)t2sok, (int)t3ok);
     return 1;
 }

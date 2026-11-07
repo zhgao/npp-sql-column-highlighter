@@ -12,8 +12,8 @@
 namespace sqlhl {
 namespace {
 
-const int INDIC_VALUE = 8;    // 值的指示器：琥珀色
-const int INDIC_COLUMN = 9;   // 列名的指示器：蓝色
+int INDIC_VALUE = 8;    // 值的指示器：琥珀色（默认；v1.0.1 可由 setIndicators 改写）
+int INDIC_COLUMN = 9;   // 列名的指示器：蓝色（默认；v1.0.1 可由 setIndicators 改写）
 const int WINDOW = 20000;     // 在光标前后各取多少字节来定位语句
 
 typedef std::pair<int, int> Range;
@@ -239,6 +239,13 @@ bool parseInsert(const std::string& stmt, Parsed& out) {
 }
 
 }  // namespace
+
+void setIndicators(int valueIndic, int columnIndic) {
+    if (valueIndic >= 0)
+        INDIC_VALUE = valueIndic;
+    if (columnIndic >= 0)
+        INDIC_COLUMN = columnIndic;
+}
 
 bool analyse(HWND sci, int pos, HitInfo& out) {
     int base = 0;

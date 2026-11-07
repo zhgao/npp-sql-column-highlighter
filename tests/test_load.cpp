@@ -38,7 +38,7 @@ int main() {
     GetFuncsFn getFuncsArray = (GetFuncsFn)GetProcAddress(h, "getFuncsArray");
     int n = 0;
     void* arr = getFuncsArray ? getFuncsArray(&n) : nullptr;
-    check(arr != nullptr && n == 2, "getFuncsArray() count==2");
+    check(arr != nullptr && n == 3, "getFuncsArray() count==3");
 
     FreeLibrary(h);
     printf(fails ? "LOAD TEST FAILED\n" : "LOAD TEST PASSED\n");

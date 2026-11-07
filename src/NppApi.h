@@ -12,6 +12,9 @@
 
 #define NPPMSG (0x0400 + 1000)
 #define NPPM_GETCURRENTSCINTILLA (NPPMSG + 4)
+// 2137，v8.5.6 起可用：向 Notepad++ 申请 indicator 号，避免与
+// Notepad++ 自身（21-31）及其他插件冲突。申请失败时回退到 8/9。
+#define NPPM_ALLOCATEINDICATOR (NPPMSG + 113)
 
 #define NPPN_FIRST 1000
 #define NPPN_READY (NPPN_FIRST + 1)

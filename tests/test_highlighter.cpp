@@ -212,6 +212,25 @@ int main() {
     clickAt("INSERT INTO t (a, b) SELECT a, b FROM s;", "a");
     check(theFake().fills.empty(), "insert-select/none");
 
+    // v1.0.1 回归：George 2026-11-07 真机复现用例（多行、中文值）。
+    // v1.0.0 在 Windows 上点 id 完全没高亮；解析器对这段 SQL 必须通。
+    const std::string tu =
+        "INSERT INTO user (id, name, age)\n"
+        "VALUES\n"
+        "(1, '张三', 25),\n"
+        "(2, '李四', 30);";
+    clickAt(tu, "id");
+    check(covered(INDIC_COLUMN, tu, "id"), "user-sql-click-id/col");
+    check(covered(INDIC_VALUE, tu, "1"), "user-sql-click-id/val1");
+    clickAt(tu, "name");
+    check(covered(INDIC_VALUE, tu, "'张三'"), "user-sql-click-name/row1");
+    check(covered(INDIC_VALUE, tu, "'李四'"), "user-sql-click-name/row2");
+    clickAt(tu, "age");
+    check(covered(INDIC_VALUE, tu, "25"), "user-sql-click-age/row1");
+    check(covered(INDIC_VALUE, tu, "30"), "user-sql-click-age/row2");
+    dclickAt(tu, "'张三'");
+    check(covered(INDIC_COLUMN, tu, "name"), "user-sql-dclick-val/col");
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

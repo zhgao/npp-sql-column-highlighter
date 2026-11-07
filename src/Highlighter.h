@@ -20,6 +20,12 @@ struct HitInfo {
     bool isColumn = false;  // true = 光标在列名上，false = 光标在值上
 };
 
+// 设置绘制用的 indicator 号。默认 8（值）/ 9（列），与旧版一致；
+// v1.0.1 起 PluginMain 会在 NPPN_READY 时用 NPPM_ALLOCATEINDICATOR
+// 向 Notepad++ 申请两个号（避免与 Notepad++ 自身 21-31 及其他插件冲突），
+// 申请失败时回退到默认值。
+void setIndicators(int valueIndic, int columnIndic);
+
 // 分析 sci 中 pos 处的 INSERT 语句；找到列/值对应关系返回 true。
 bool analyse(HWND sci, int pos, HitInfo& out);
 

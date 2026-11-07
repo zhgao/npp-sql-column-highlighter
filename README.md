@@ -14,6 +14,24 @@ INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com');
 - Double-click a column name → same as clicking: its value(s) are highlighted.
 - Highlights are cleared automatically when the caret moves away or you switch files.
 - Can be toggled from the plugin menu (`Plugins → SQL Column Highlighter`).
+- `Highlight at caret` in the same menu forces a highlight at the current caret
+  and reports whether a column/value was found (v1.0.1 diagnostic).
+
+## Changelog
+
+### v1.0.1 (2026-11-07)
+Real-device bug: v1.0.0 showed no highlight at all on Windows (Notepad++ 8.9.9,
+Plugins Admin install) for `INSERT INTO user (id, name, age) VALUES (1, '张三', 25), (2, '李四', 30);`,
+while the parser passed the same SQL in tests. Fixes:
+- `SCN_UPDATEUI` no longer returns early when there is a selection (a double-click
+  creates one); the selection start + 1 is now probed, so double-clicked columns
+  and values both highlight even if `SCN_DOUBLECLICK` arrives late or not at all.
+- Indicators are now allocated with `NPPM_ALLOCATEINDICATOR` (v8.5.6+) instead of
+  hard-coded 8/9, falling back to 8/9 if allocation fails.
+- New `Highlight at caret` menu command bypasses notifications entirely, so a
+  manual trigger distinguishes "notification never arrived" from "drawing failed".
+- Debug log at `%TEMP%\SqlColumnHighlighter.log` records every caret/double-click
+  probe and `analyse()` result.
 
 The parser is quote/comment aware: commas inside strings (`'x, y'`), escaped quotes
 (`'it''s'`), nested function calls (`UPPER('a')`), multi-line statements, multi-row

@@ -1,9 +1,13 @@
 name: Real Windows Scintilla repro
 
-# 真机复现：George 的 Notepad++ 上 SCI_GETTEXTRANGE 写回全 \x00，
-# 而 SCI_GETLENGTH 正常。本流程在真实 Windows runner + 真实 Scintilla
-#（Notepad++ 自带的 SciLexer.dll）+ 真实 MSVC 下，对比两个调用，
-# 验证 v1.0.3 改走 SCI_GETTEXT 是否成立。跑完之前不要把 v1.0.3 交给用户。
+# 真机复现：George 的 Notepad++ 上 v1.0.2 读回 83 个 \x00。
+# 根因已查明：src/Scintilla.h 把 SCI_GETTEXTRANGE 的消息号抄错成 2166
+#（2166 其实是 SCI_LINEFROMPOSITION，正确值是 2162），插件发的根本
+# 不是取文本消息。本流程在真实 Windows runner + 真实 Scintilla 5.6.9
+#（SciTE 自带的 Scintilla.dll；Notepad++ 8.9.9 不再单独发 SciLexer.dll，
+# Scintilla 已静态链进 notepad++.exe）+ 真实 MSVC 下做三组对照：
+# 旧错号 2166 应复现全 \x00，修正后的 2162 与 SCI_GETTEXT 应取回确切 SQL。
+# 跑完之前不要把 v1.0.3 交给用户。
 on:
   push:
     branches: [main]
@@ -17,21 +21,22 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Download Notepad++ portable (for SciLexer.dll)
+      - name: Download SciTE (for real Scintilla.dll)
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.9/npp.8.9.9.portable.x64.zip" -OutFile npp.zip
-          Expand-Archive npp.zip -DestinationPath npp
-          Get-ChildItem npp | Select-Object Name, Length
+          Invoke-WebRequest -Uri "https://www.scintilla.org/wscite569.zip" -OutFile scite.zip
+          Expand-Archive scite.zip -DestinationPath scite
+          Get-ChildItem scite\wscite | Select-Object Name, Length
 
       - name: Build repro
         shell: cmd
         run: cl /EHsc /I src tests\real_sci_repro.cpp user32.lib /Fe:repro.exe
 
-      - name: Run repro against real SciLexer.dll
+      - name: Run repro against real Scintilla.dll
         shell: cmd
         run: |
-          copy npp\SciLexer.dll .
+          copy scite\wscite\Scintilla.dll .
+          copy scite\wscite\Lexilla.dll .
           repro.exe
 
       - name: Run fake-Scintilla tests under real MSVC

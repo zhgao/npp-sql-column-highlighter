@@ -29,6 +29,11 @@ void setIndicators(int valueIndic, int columnIndic);
 // 分析 sci 中 pos 处的 INSERT 语句；找到列/值对应关系返回 true。
 bool analyse(HWND sci, int pos, HitInfo& out);
 
+// 诊断 analyse() 在 pos 处失败的原因：返回一行文本，含文档长度、
+// 语句长度、解析失败的阶段，以及语句前 120 字节的转义预览。
+// v1.0.2 起用于在真机日志里定位是读到的文本不对还是解析哪一步断了。
+std::string diagnose(HWND sci, int pos);
+
 // 按 HitInfo 绘制高亮：列名蓝色，值琥珀色。
 void highlight(HWND sci, const HitInfo& hit);
 

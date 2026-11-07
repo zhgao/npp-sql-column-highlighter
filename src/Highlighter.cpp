@@ -6,8 +6,14 @@
 #include "Highlighter.h"
 #include "Scintilla.h"
 
-#include <regex>
 #include <cctype>
+#include <cstdio>
+
+// v1.0.2：不再用 std::regex。v1.0.1 的日志证明通知和 indicator 都正常，
+// 但 analyse() 在真机上对每个位置都返回 false，而同一段 SQL 在
+// Linux 测试里是通的。MSVC 的 std::regex 在中文 Windows  locale 下对
+// 含非 ASCII 字节的字符串行为不可靠，是头号嫌疑；改成纯 ASCII 手写
+// 关键字匹配（大小写不敏感、带词边界），彻底去掉这个变量。
 
 namespace sqlhl {
 namespace {
@@ -170,41 +176,117 @@ struct Parsed {
     std::vector<std::vector<Range>> rows;
 };
 
-// 解析 INSERT INTO ... (列) VALUES (...), (...)；失败返回 false。
-bool parseInsert(const std::string& stmt, Parsed& out) {
+// 手写关键字匹配（替代 std::regex）：纯 ASCII、大小写不敏感、带词边界。
+bool isWordChar(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+bool matchKeywordAt(const std::string& s, size_t pos, const char* kw) {
+    size_t k = 0;
+    while (kw[k] != '\0') {
+        if (pos + k >= s.size())
+            return false;
+        const unsigned char a = (unsigned char)s[pos + k];
+        const unsigned char b = (unsigned char)kw[k];
+        const unsigned char al = (a >= 'A' && a <= 'Z') ? (unsigned char)(a + 32) : a;
+        const unsigned char bl = (b >= 'A' && b <= 'Z') ? (unsigned char)(b + 32) : b;
+        if (al != bl)
+            return false;
+        ++k;
+    }
+    if (pos > 0 && isWordChar((unsigned char)s[pos - 1]))
+        return false;
+    if (pos + k < s.size() && isWordChar((unsigned char)s[pos + k]))
+        return false;
+    return true;
+}
+
+size_t findKeyword(const std::string& s, const char* kw, size_t from) {
+    const size_t n = s.size();
+    size_t klen = 0;
+    while (kw[klen] != '\0')
+        ++klen;
+    if (klen == 0 || n < klen)
+        return std::string::npos;
+    for (size_t i = from; i + klen <= n; ++i) {
+        if (matchKeywordAt(s, i, kw))
+            return i;
+    }
+    return std::string::npos;
+}
+
+// 在 masked 里找 "INSERT <空白> INTO"，返回 INTO 之后的位置；找不到返回 npos。
+size_t findInsertInto(const std::string& masked, size_t from) {
+    size_t p = from;
+    while (true) {
+        const size_t ins = findKeyword(masked, "INSERT", p);
+        if (ins == std::string::npos)
+            return std::string::npos;
+        size_t j = ins + 6;
+        while (j < masked.size() &&
+               (masked[j] == ' ' || masked[j] == '\t' || masked[j] == '\r' ||
+                masked[j] == '\n'))
+            ++j;
+        if (matchKeywordAt(masked, j, "INTO"))
+            return j + 4;
+        p = ins + 6;
+    }
+}
+
+enum ParseStage {
+    STAGE_OK = 0,
+    STAGE_NO_INSERT = 1,
+    STAGE_NO_COLUMN_PAREN = 2,
+    STAGE_NO_COLUMN_CLOSE = 3,
+    STAGE_NO_COLUMNS = 4,
+    STAGE_NO_VALUES = 5,
+    STAGE_NO_ROWS = 6,
+};
+
+// 解析 INSERT INTO ... (列) VALUES (...), (...)；失败返回 false，
+// stageOut（可空）填入失败阶段，见 ParseStage。
+bool parseInsert(const std::string& stmt, Parsed& out, int* stageOut = nullptr) {
     const std::string masked = maskText(stmt);
 
-    static const std::regex insertRe("\\bINSERT\\s+INTO\\b",
-                                     std::regex_constants::ECMAScript |
-                                         std::regex_constants::icase);
-    std::smatch m;
-    if (!std::regex_search(masked, m, insertRe))
+    const size_t afterInsert = findInsertInto(masked, 0);
+    if (afterInsert == std::string::npos) {
+        if (stageOut)
+            *stageOut = STAGE_NO_INSERT;
         return false;
-    const size_t afterInsert = (size_t)m.position() + (size_t)m.length();
+    }
 
     const size_t ci = masked.find('(', afterInsert);  // 列名列表的左括号
-    if (ci == std::string::npos)
+    if (ci == std::string::npos) {
+        if (stageOut)
+            *stageOut = STAGE_NO_COLUMN_PAREN;
         return false;
+    }
     const int cj = matchParen(masked, (int)ci);
-    if (cj < 0)
+    if (cj < 0) {
+        if (stageOut)
+            *stageOut = STAGE_NO_COLUMN_CLOSE;
         return false;
+    }
 
     std::vector<Range> columns;
     for (const Range& r : splitTopLevel(masked, (int)ci + 1, cj)) {
         if (!isBlank(stmt, r))
             columns.push_back(r);
     }
-    if (columns.empty())
+    if (columns.empty()) {
+        if (stageOut)
+            *stageOut = STAGE_NO_COLUMNS;
         return false;
+    }
 
-    static const std::regex valuesRe("\\bVALUES\\b",
-                                     std::regex_constants::ECMAScript |
-                                         std::regex_constants::icase);
-    std::smatch vm;
-    const std::string tail = masked.substr(ci);
-    if (!std::regex_search(tail, vm, valuesRe))
+    const size_t vpos = findKeyword(masked, "VALUES", ci);
+    if (vpos == std::string::npos) {
+        if (stageOut)
+            *stageOut = STAGE_NO_VALUES;
         return false;
-    size_t i = ci + (size_t)vm.position() + (size_t)vm.length();
+    }
+    size_t i = vpos + 6;
     const size_t n = masked.size();
 
     std::vector<std::vector<Range>> rows;
@@ -230,12 +312,44 @@ bool parseInsert(const std::string& stmt, Parsed& out) {
         }
         break;  // 碰到 ON DUPLICATE KEY 之类的尾巴就停
     }
-    if (rows.empty())
+    if (rows.empty()) {
+        if (stageOut)
+            *stageOut = STAGE_NO_ROWS;
         return false;
+    }
 
+    if (stageOut)
+        *stageOut = STAGE_OK;
     out.columns = columns;
     out.rows = rows;
     return true;
+}
+
+// 把 stmt 的前 120 字节转义成可读预览：可打印 ASCII 原样，换行/制表转义，
+// 其余字节写成 \xNN。这样日志里能看出读到的到底是 UTF-8、GBK、BOM
+// 还是别的编码，而不会把原始中文直接写进日志文件。
+std::string previewEscaped(const std::string& s) {
+    std::string out;
+    const size_t n = s.size() < 120 ? s.size() : 120;
+    char tmp[8];
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned char c = (unsigned char)s[i];
+        if (c == '\n')
+            out += "\\n";
+        else if (c == '\r')
+            out += "\\r";
+        else if (c == '\t')
+            out += "\\t";
+        else if (c >= 32 && c < 127)
+            out += (char)c;
+        else {
+            std::snprintf(tmp, sizeof(tmp), "\\x%02X", c);
+            out += tmp;
+        }
+    }
+    if (s.size() > 120)
+        out += "...";
+    return out;
 }
 
 }  // namespace
@@ -286,6 +400,61 @@ bool analyse(HWND sci, int pos, HitInfo& out) {
         }
     }
     return false;
+}
+
+std::string diagnose(HWND sci, int pos) {
+    const int docLen = sciLength(sci);
+    int base = 0;
+    std::string stmt;
+    char buf[1024];
+    if (!statementAt(sci, pos, base, stmt)) {
+        std::snprintf(buf, sizeof(buf),
+                      "docLen=%d pos=%d stage=no-statement stmtLen=0",
+                      docLen, pos);
+        return std::string(buf);
+    }
+    Parsed p;
+    int stage = 0;
+    if (!parseInsert(stmt, p, &stage)) {
+        const char* stageName = "unknown";
+        switch (stage) {
+            case STAGE_NO_INSERT: stageName = "no-insert"; break;
+            case STAGE_NO_COLUMN_PAREN: stageName = "no-column-paren"; break;
+            case STAGE_NO_COLUMN_CLOSE: stageName = "no-column-close"; break;
+            case STAGE_NO_COLUMNS: stageName = "no-columns"; break;
+            case STAGE_NO_VALUES: stageName = "no-values"; break;
+            case STAGE_NO_ROWS: stageName = "no-rows"; break;
+            default: break;
+        }
+        std::snprintf(buf, sizeof(buf),
+                      "docLen=%d pos=%d base=%d stmtLen=%d stage=%s "
+                      "preview='%s'",
+                      docLen, pos, base, (int)stmt.size(), stageName,
+                      previewEscaped(stmt).c_str());
+        return std::string(buf);
+    }
+    const int rel = pos - base;
+    bool hit = false;
+    for (const Range& r : p.columns) {
+        if (r.first <= rel && rel <= r.second)
+            hit = true;
+    }
+    if (!hit) {
+        for (const auto& row : p.rows) {
+            for (const Range& r : row) {
+                if (r.first <= rel && rel <= r.second)
+                    hit = true;
+            }
+        }
+    }
+    std::snprintf(buf, sizeof(buf),
+                  "docLen=%d pos=%d base=%d rel=%d stmtLen=%d "
+                  "stage=%s cols=%d rows=%d preview='%s'",
+                  docLen, pos, base, rel, (int)stmt.size(),
+                  hit ? "parsed-hit" : "parsed-no-hit",
+                  (int)p.columns.size(), (int)p.rows.size(),
+                  previewEscaped(stmt).c_str());
+    return std::string(buf);
 }
 
 void clearHighlights(HWND sci) {

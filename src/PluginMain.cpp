@@ -69,6 +69,8 @@ void debugLog(const char* fmt, ...) {
 }
 
 // 在指定探测点尝试高亮；返回 true 表示画上了。
+// 失败时多记一行 diagnose（文档长度、语句预览、解析断在哪一步），
+// v1.0.1 的日志只说了 analyse=0，没法区分是文本不对还是解析断了。
 bool tryHighlightAt(HWND sci, int probe, const char* why) {
     sqlhl::HitInfo hit;
     const bool ok = sqlhl::analyse(sci, probe, hit);
@@ -80,6 +82,7 @@ bool tryHighlightAt(HWND sci, int probe, const char* why) {
         g_lastProbe = probe;
         return true;
     }
+    debugLog("diagnose %s", sqlhl::diagnose(sci, probe).c_str());
     sqlhl::clearHighlights(sci);
     g_lastProbe = -1;
     return false;
@@ -108,6 +111,7 @@ void handleCaret(HWND sci) {
         } else {
             debugLog("caret pos=%d analyse=%d isColumn=%d", probe,
                      ok ? 1 : 0, ok ? (hit.isColumn ? 1 : 0) : -1);
+            debugLog("diagnose %s", sqlhl::diagnose(sci, probe).c_str());
             sqlhl::clearHighlights(sci);
             g_lastProbe = -1;
         }
@@ -165,7 +169,9 @@ void highlightNow() {
              ok ? hit.colIdx : -1);
     if (!ok) {
         sqlhl::clearHighlights(sci);
-        TCHAR msg[512];
+        const std::string diag = sqlhl::diagnose(sci, probe);
+        debugLog("diagnose %s", diag.c_str());
+        TCHAR msg[1024];
         _stprintf_s(msg,
                     TEXT("No INSERT column/value under the caret ")
                     TEXT("(pos %d).\r\n\r\n")
@@ -196,7 +202,7 @@ void highlightNow() {
 void showAbout() {
     TCHAR msg[1024];
     _stprintf_s(msg,
-                TEXT("SQL Column Highlighter v1.0.1\r\n")
+                TEXT("SQL Column Highlighter v1.0.2\r\n")
                 TEXT("\r\n")
                 TEXT("In an INSERT statement:\r\n")
                 TEXT("  - Click a column name  -> its value(s) are highlighted\r\n")

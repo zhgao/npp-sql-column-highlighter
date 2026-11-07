@@ -19,6 +19,22 @@ INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com');
 
 ## Changelog
 
+### v1.0.2 (2026-11-08)
+Real-device bug, continued: v1.0.1's log proved the notifications arrive and
+the indicators allocate (base 9: value=9, column=10), yet `analyse()` returned
+false for every caret position — including a manual `Highlight at caret` at
+pos 19, i.e. inside `id` — so the failure is inside parsing itself, not in
+notification timing or indicator allocation. Changes:
+- `std::regex` is gone from the parser: `INSERT INTO` / `VALUES` are now
+  matched by a hand-written ASCII case-insensitive keyword search with word
+  boundaries (MSVC's `std::regex` on Chinese Windows is the prime suspect,
+  since the same SQL passed the parser in tests on Linux).
+- New `diagnose()` writes one line to `%TEMP%\SqlColumnHighlighter.log` on
+  every failed probe: document length, statement length, the parse stage
+  that failed (`no-insert` / `no-values` / `no-rows` / `parsed-no-hit` …),
+  and an escaped preview of the first 120 bytes of the statement, so the
+  log now shows exactly what text the plugin read and where parsing stopped.
+
 ### v1.0.1 (2026-11-07)
 Real-device bug: v1.0.0 showed no highlight at all on Windows (Notepad++ 8.9.9,
 Plugins Admin install) for `INSERT INTO user (id, name, age) VALUES (1, '张三', 25), (2, '李四', 30);`,

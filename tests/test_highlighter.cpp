@@ -231,6 +231,22 @@ int main() {
     dclickAt(tu, "'张三'");
     check(covered(INDIC_COLUMN, tu, "name"), "user-sql-dclick-val/col");
 
+    // v1.0.2：diagnose()——analyse 失败时说清断在哪一步。
+    {
+        FakeSci& f = theFake();
+        f.doc = tu;
+        const std::string d = sqlhl::diagnose((HWND)1, (int)tu.find("id") + 1);
+        check(d.find("parsed-hit") != std::string::npos,
+              "diagnose/user-sql/parsed-hit");
+        check(d.find("docLen=") != std::string::npos, "diagnose/has-doclen");
+        check(d.find("INSERT INTO user") != std::string::npos,
+              "diagnose/preview-has-sql");
+        f.doc = "hello world, just text";
+        const std::string d2 = sqlhl::diagnose((HWND)1, 3);
+        check(d2.find("no-insert") != std::string::npos,
+              "diagnose/plain-text/no-insert");
+    }
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -18,6 +18,11 @@
 // 退出码：0 = 三组都符合预期（根因得证，且 v1.0.3 的取文本方式成立）；
 // 1 = 任一组不符合预期。
 //
+// run #4（2026-11-08）：repro.exe 以 0xC0000005 崩溃，且日志里一行输出
+// 都没有——stdout 在管道里是全缓冲的，崩溃时没刷出来。之后改成无缓冲
+// 输出 + 崩溃过滤器打印异常码和故障地址，再跑就能定位崩到哪一步。
+// 崩的是复现程序本身，插件代码不在其中，不影响 v1.0.3 的结论。
+//
 // 编译（GitHub Actions windows-latest，MSVC）：
 //   cl /EHsc /I src tests\real_sci_repro.cpp user32.lib
 // 运行前把 Scintilla.dll 与 Lexilla.dll（SciTE 包 wscite/ 下）
@@ -71,7 +76,22 @@ static size_t countNonZero(const char* buf, size_t n) {
     return c;
 }
 
+static LONG WINAPI onCrash(EXCEPTION_POINTERS* ep) {
+    // stderr is unbuffered, so this survives the crash.
+    fprintf(stderr, "CRASH: exception code 0x%08lX at address %p\n",
+            (unsigned long)ep->ExceptionRecord->ExceptionCode,
+            ep->ExceptionRecord->ExceptionAddress);
+    fflush(stderr);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int main() {
+    // run #4 教训：stdout 在管道里是全缓冲的，程序崩溃时缓冲区
+    // 没刷出来，日志里什么都没有。改成无缓冲，每行立刻进日志，
+    // 崩到哪一行都能从最后一条输出看出来。
+    setvbuf(stdout, NULL, _IONBF, 0);
+    ::SetUnhandledExceptionFilter(onCrash);
+    printf("start: sizeof(void*)=%zu (8=x64, 4=x86)\n", sizeof(void*));
     printf("header SCI_GETTEXTRANGE=%d (official 2162)\n", SCI_GETTEXTRANGE);
     printf("header SCI_GETTEXT=%d (official 2182)\n", SCI_GETTEXT);
 
@@ -81,7 +101,7 @@ int main() {
                (unsigned long)::GetLastError());
         return 1;
     }
-    printf("Scintilla.dll loaded\n");
+    printf("Scintilla.dll loaded (hmodule=%p)\n", (void*)lex);
 
     HWND parent = ::CreateWindowExA(0, "STATIC", "repro-parent",
                                     WS_OVERLAPPEDWINDOW, 0, 0, 640, 480,
@@ -99,7 +119,9 @@ int main() {
     }
     printf("Scintilla window created\n");
 
+    printf("calling SCI_SETTEXT...\n");
     sci(sciWnd, SCI_SETTEXT, 0, (LPARAM)kSql);
+    printf("SCI_SETTEXT done\n");
     const LRESULT docLen = sci(sciWnd, SCI_GETLENGTH, 0, 0);
     const LRESULT expectLen = (LRESULT)(sizeof(kSql) - 1);
     printf("SCI_GETLENGTH = %lld (expected %lld)\n", (long long)docLen,
@@ -110,6 +132,7 @@ int main() {
     }
 
     // 1) 旧错号 2166：应复现 George 真机故障——写回全 \x00。
+    printf("TEST1: sending msg 2166...\n");
     bool t1ok = false;
     {
         std::string buf((size_t)docLen + 1, '\0');
@@ -132,6 +155,7 @@ int main() {
 
     // 2) 修正后的 SCI_GETTEXTRANGE（2162）：应取回确切 SQL，
     // 证明结构体本身没错，错的只是消息号。
+    printf("TEST2: sending SCI_GETTEXTRANGE(2162)...\n");
     bool t2ok = false;
     {
         std::string buf((size_t)docLen + 1, '\0');
@@ -150,6 +174,7 @@ int main() {
     }
 
     // 3) 新方式：SCI_GETTEXT（v1.0.3 用的调用）。
+    printf("TEST3: sending SCI_GETTEXT...\n");
     bool t3ok = false;
     {
         std::string buf((size_t)docLen + 1, '\0');

@@ -1,0 +1,39 @@
+name: Real Windows Scintilla repro
+
+# 真机复现：George 的 Notepad++ 上 SCI_GETTEXTRANGE 写回全 \x00，
+# 而 SCI_GETLENGTH 正常。本流程在真实 Windows runner + 真实 Scintilla
+#（Notepad++ 自带的 SciLexer.dll）+ 真实 MSVC 下，对比两个调用，
+# 验证 v1.0.3 改走 SCI_GETTEXT 是否成立。跑完之前不要把 v1.0.3 交给用户。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Download Notepad++ portable (for SciLexer.dll)
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.9/npp.8.9.9.portable.x64.zip" -OutFile npp.zip
+          Expand-Archive npp.zip -DestinationPath npp
+          Get-ChildItem npp | Select-Object Name, Length
+
+      - name: Build repro
+        shell: cmd
+        run: cl /EHsc /I src tests\real_sci_repro.cpp user32.lib /Fe:repro.exe
+
+      - name: Run repro against real SciLexer.dll
+        shell: cmd
+        run: |
+          copy npp\SciLexer.dll .
+          repro.exe
+
+      - name: Run fake-Scintilla tests under real MSVC
+        shell: cmd
+        run: cl /EHsc /I src /FI"tests\fake_sci.h" tests\test_highlighter.cpp src\Highlighter.cpp /Fe:test_highlighter.exe && test_highlighter.exe

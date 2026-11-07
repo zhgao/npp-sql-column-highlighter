@@ -1,26 +1,37 @@
 // tests/real_sci_repro.cpp — 真机复现：George 的 Notepad++ 上
-// SCI_GETTEXTRANGE 写回的 83 字节全是 \x00（v1.0.2 diagnose 日志），
-// 而 SCI_GETLENGTH 返回 83 是对的。
+// v1.0.2 的 diagnose 日志读回 83 个 \x00（docLen=83 是对的）。
 //
-// 本程序在真实 Windows + 真实 Scintilla（Notepad++ 自带的 SciLexer.dll）
-// 上重现那两个调用，用插件同款 src/Scintilla.h 里的结构体定义，
-// 对比 SCI_GETTEXTRANGE 与 SCI_GETTEXT 的返回：
-//   - 若 GETTEXTRANGE 在这里也返回全 \x00，说明故障与 Notepad++ 无关，
-//     是 Scintilla 调用本身的问题，v1.0.3 改走 SCI_GETTEXT 是对的；
-//   - 若 GETTEXTRANGE 在这里正常，说明故障只在 Notepad++ 宿主环境里，
-//     同样证明改走 SCI_GETTEXT（更简单的调用）是正确的规避。
-// 退出码：0 = SCI_GETTEXT 正确取回 SQL（v1.0.3 的取文本方式在真机上成立），
-// 1 = SCI_GETTEXT 也失败。
+// 真正的根因（2026-11-08 对照 Scintilla 5.6.9 官方头文件查出）：
+// src/Scintilla.h 把 SCI_GETTEXTRANGE 的消息号抄错成 2166，
+// 2166 其实是 SCI_LINEFROMPOSITION——插件发的根本不是取文本消息，
+// Scintilla 当然什么都不写。结构体本身没错，错的是消息号。
+// 同一份头文件还抄错三处：SCI_INDICSETALPHA（2083，实为 INDICGETFORE）、
+// SCI_INDICSETOUTLINEALPHA（2208）、SCN_DOUBLECLICK（2103，实为 2006）。
+// Linux 假测试用同一份头文件分发，错号对错号，全绿也没发现。
+//
+// 本程序在真实 Windows + 真实 Scintilla 5.6.9（SciTE 自带的 Scintilla.dll；
+// Notepad++ 8.9.9 不再单独发 SciLexer.dll，Scintilla 已静态链进
+// notepad++.exe）上做三组对照，用插件同款 src/Scintilla.h：
+//   1) 旧错号 2166 发 TextRange → 应复现全 \x00（George 日志同款故障）；
+//   2) 修正后的 SCI_GETTEXTRANGE（2162）→ 应取回确切 SQL；
+//   3) SCI_GETTEXT（2182，v1.0.3 用的调用）→ 应取回确切 SQL。
+// 退出码：0 = 三组都符合预期（根因得证，且 v1.0.3 的取文本方式成立）；
+// 1 = 任一组不符合预期。
 //
 // 编译（GitHub Actions windows-latest，MSVC）：
 //   cl /EHsc /I src tests\real_sci_repro.cpp user32.lib
-// 运行前把 SciLexer.dll（Notepad++ portable 包里）放在同目录或 PATH 里。
+// 运行前把 Scintilla.dll 与 Lexilla.dll（SciTE 包 wscite/ 下）
+// 放在 repro.exe 同目录。
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 #include "../src/Scintilla.h"
+
+// 旧的错号：v1.0.0–v1.0.2 的头文件里 SCI_GETTEXTRANGE 就是这个值；
+// 官方头文件里 2166 = SCI_LINEFROMPOSITION。
+#define SCI_GETTEXTRANGE_WRONG 2166
 
 // George 真机文件的确切内容（CRLF，末尾带换行，UTF-8 下共 83 字节，
 // 与 v1.0.2 日志里的 docLen=83 一致）。
@@ -50,14 +61,25 @@ static LRESULT sci(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     return ::SendMessage(h, msg, wp, lp);
 }
 
+static size_t countNonZero(const char* buf, size_t n) {
+    size_t c = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (buf[i] != '\0')
+            ++c;
+    return c;
+}
+
 int main() {
-    HMODULE lex = ::LoadLibraryA("SciLexer.dll");
+    printf("header SCI_GETTEXTRANGE=%d (official 2162)\n", SCI_GETTEXTRANGE);
+    printf("header SCI_GETTEXT=%d (official 2182)\n", SCI_GETTEXT);
+
+    HMODULE lex = ::LoadLibraryA("Scintilla.dll");
     if (!lex) {
-        printf("FAIL: cannot load SciLexer.dll (err %lu)\n",
+        printf("FAIL: cannot load Scintilla.dll (err %lu)\n",
                (unsigned long)::GetLastError());
         return 1;
     }
-    printf("SciLexer.dll loaded\n");
+    printf("Scintilla.dll loaded\n");
 
     HWND parent = ::CreateWindowExA(0, "STATIC", "repro-parent",
                                     WS_OVERLAPPEDWINDOW, 0, 0, 640, 480,
@@ -78,8 +100,35 @@ int main() {
     sci(sciWnd, SCI_SETTEXT, 0, (LPARAM)kSql);
     const LRESULT docLen = sci(sciWnd, SCI_GETLENGTH, 0, 0);
     printf("SCI_GETLENGTH = %lld (expected 83)\n", (long long)docLen);
+    if (docLen != 83) {
+        printf("RESULT: unexpected docLen\n");
+        return 1;
+    }
 
-    // 1) 旧方式：SCI_GETTEXTRANGE（v1.0.0–v1.0.2 用的调用）。
+    // 1) 旧错号 2166：应复现 George 真机故障——写回全 \x00。
+    bool t1ok = false;
+    {
+        std::string buf((size_t)docLen + 1, '\0');
+        Sci_TextRange tr;
+        tr.chrg.cpMin = 0;
+        tr.chrg.cpMax = docLen;
+        tr.lpstrText = &buf[0];
+        const LRESULT n =
+            sci(sciWnd, SCI_GETTEXTRANGE_WRONG, 0, (LPARAM)&tr);
+        printf("msg 2166 (old wrong GETTEXTRANGE) returned %lld\n",
+               (long long)n);
+        printEscaped("msg-2166", buf.data(), (size_t)docLen);
+        const size_t nz = countNonZero(buf.data(), (size_t)docLen);
+        printf("msg 2166 non-zero bytes: %zu / %lld\n", nz,
+               (long long)docLen);
+        t1ok = (nz == 0);
+        printf("TEST1 old-wrong-number-2166-reproduces-all-NULs: %s\n",
+               t1ok ? "PASS" : "FAIL");
+    }
+
+    // 2) 修正后的 SCI_GETTEXTRANGE（2162）：应取回确切 SQL，
+    // 证明结构体本身没错，错的只是消息号。
+    bool t2ok = false;
     {
         std::string buf((size_t)docLen + 1, '\0');
         Sci_TextRange tr;
@@ -88,17 +137,16 @@ int main() {
         tr.lpstrText = &buf[0];
         const LRESULT n =
             sci(sciWnd, SCI_GETTEXTRANGE, 0, (LPARAM)&tr);
-        printf("SCI_GETTEXTRANGE returned %lld\n", (long long)n);
-        printEscaped("SCI_GETTEXTRANGE", buf.data(), (size_t)docLen);
-        size_t nonZero = 0;
-        for (size_t i = 0; i < (size_t)docLen; ++i)
-            if (buf[i] != '\0')
-                ++nonZero;
-        printf("SCI_GETTEXTRANGE non-zero bytes: %zu / %lld\n", nonZero,
-               (long long)docLen);
+        printf("SCI_GETTEXTRANGE(2162) returned %lld\n", (long long)n);
+        printEscaped("SCI_GETTEXTRANGE-2162", buf.data(), (size_t)docLen);
+        t2ok = (n == docLen &&
+                buf.compare(0, (size_t)docLen, kSql, (size_t)docLen) == 0);
+        printf("TEST2 corrected-GETTEXTRANGE-2162-returns-exact-SQL: %s\n",
+               t2ok ? "PASS" : "FAIL");
     }
 
-    // 2) 新方式：SCI_GETTEXT（v1.0.3 用的调用）。
+    // 3) 新方式：SCI_GETTEXT（v1.0.3 用的调用）。
+    bool t3ok = false;
     {
         std::string buf((size_t)docLen + 1, '\0');
         const LRESULT n = sci(sciWnd, SCI_GETTEXT, (WPARAM)(docLen + 1),
@@ -106,12 +154,17 @@ int main() {
         printf("SCI_GETTEXT returned %lld\n", (long long)n);
         printEscaped("SCI_GETTEXT", buf.data(),
                      n > 0 ? (size_t)n : 0);
-        if (n == docLen && buf.compare(0, (size_t)docLen, kSql,
-                                       (size_t)docLen) == 0) {
-            printf("RESULT: SCI_GETTEXT returned the exact SQL -> v1.0.3 text retrieval works on real Windows\n");
-            return 0;
-        }
-        printf("RESULT: SCI_GETTEXT did NOT return the exact SQL\n");
-        return 1;
+        t3ok = (n == docLen &&
+                buf.compare(0, (size_t)docLen, kSql, (size_t)docLen) == 0);
+        printf("TEST3 SCI_GETTEXT-returns-exact-SQL: %s\n",
+               t3ok ? "PASS" : "FAIL");
     }
+
+    if (t1ok && t2ok && t3ok) {
+        printf("RESULT: root cause confirmed (2166 was LINEFROMPOSITION, not GETTEXTRANGE) and v1.0.3 text retrieval works on real Windows\n");
+        return 0;
+    }
+    printf("RESULT: NOT all checks passed (t1=%d t2=%d t3=%d)\n",
+           (int)t1ok, (int)t2ok, (int)t3ok);
+    return 1;
 }

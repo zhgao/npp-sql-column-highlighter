@@ -20,14 +20,29 @@ INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com');
 ## Changelog
 
 ### v1.0.3 (2026-11-08)
-Root cause found, from the v1.0.2 diagnose log on the real machine:
-`docLen=83` (correct) but the 83 bytes read back were all `\x00` —
-`SCI_GETTEXTRANGE` returned nothing at all, so the plugin never saw the
-SQL and `parseInsert` reported `no-insert`. The parser was never the
-problem; the text never arrived. Fix: document text is now read with
-`SCI_GETTEXT` (one plain `char*` argument, no struct), `SCI_GETTEXTRANGE`
-is no longer used anywhere. `diagnose()` now reports `gettext-empty`
-if `SCI_GETTEXT` also comes back empty while the document is non-empty.
+True root cause found, by checking our hand-written `src/Scintilla.h`
+against the official Scintilla 5.6.9 header: the v1.0.2 diagnose log
+(`docLen=83` correct, 83 bytes read back all `\x00`, `no-insert`) was not
+a Scintilla quirk — our `SCI_GETTEXTRANGE` constant was **2166**, but
+2166 is actually `SCI_LINEFROMPOSITION` (the real number is **2162**).
+The plugin was sending "give me the line number" instead of "give me the
+text", so Scintilla wrote nothing and the plugin never saw the SQL. The
+struct was fine; the message number was wrong. The Linux fake tests used
+the same header, so wrong number met wrong number and all 28 tests passed
+while the real thing did nothing. Three more copy errors in the same
+header are fixed too: `SCI_INDICSETALPHA` 2083 → 2523 (2083 is
+`INDICGETFORE`, so transparency was never set), `SCI_INDICSETOUTLINEALPHA`
+2208 → 2558, `SCN_DOUBLECLICK` 2103 → 2006 (double-click notifications
+never matched, so double-click-to-highlight was dead as well). Fixes:
+- All message numbers audited against the official header; a regression
+  test pins every constant to its official value so this can never recur.
+- Document text is now read with `SCI_GETTEXT` (2182, verified correct —
+  one plain `char*` argument, no struct); `SCI_GETTEXTRANGE` is no longer
+  used anywhere. `diagnose()` now reports `gettext-empty` if `SCI_GETTEXT`
+  also comes back empty while the document is non-empty.
+- Verified on real Windows (GitHub Actions, real Scintilla 5.6.9 from
+  SciTE): the old number 2166 reproduces the all-`\x00` failure, the
+  corrected 2162 and `SCI_GETTEXT` both return the exact SQL.
 
 ### v1.0.2 (2026-11-08)
 Real-device bug, continued: v1.0.1's log proved the notifications arrive and

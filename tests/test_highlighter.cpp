@@ -53,8 +53,9 @@ struct FakeSci {
         }
         case SCI_GETTEXTRANGE: {
             // v1.0.3 起插件不再调它；保留以防旧代码路径被测到。
-            // 注意：真机上它曾返回全 \x00（见 v1.0.3 说明），这里的 fake
-            // 故意不模拟那个故障——故障本身由真机复现程序验证。
+            // 注意：v1.0.2 真机上它“返回全 \x00”不是 Scintilla 的故障，
+            // 是头文件把消息号抄错成 2166（LINEFROMPOSITION）的结果；
+            // 这里的 fake 按头文件常量分发，号对了就正常工作。
             Sci_TextRange* tr = reinterpret_cast<Sci_TextRange*>(lp);
             int a = (int)tr->chrg.cpMin;
             int b = (int)tr->chrg.cpMax;
@@ -281,6 +282,30 @@ int main() {
                   hit.isColumn && hit.colIdx == 0,
               "v103/analyse-id-via-gettext");
     }
+
+    // v1.0.3 回归：消息号必须等于官方值。2026-11-08 真机故障的根因就是
+    // 头文件抄错的数字——SCI_GETTEXTRANGE 写成 2166（实为 LINEFROMPOSITION，
+    // 所以真机读回全 \x00），SCI_INDICSETALPHA 写成 2083（实为 INDICGETFORE，
+    // 透明度从没设上），SCI_INDICSETOUTLINEALPHA 写成 2208，
+    // SCN_DOUBLECLICK 写成 2103（实为 2006，双击通知永远对不上号）。
+    // 数字来源：Scintilla 5.6.9 官方 include/Scintilla.h，逐个核对过。
+    // fake 与插件共用这份头文件，错号对错号是测不出来的，只能这样钉死。
+    check(SCI_GETTEXTRANGE == 2162, "msgnum/gettextrange-2162");
+    check(SCI_GETTEXT == 2182, "msgnum/gettext-2182");
+    check(SCI_SETTEXT == 2181, "msgnum/settext-2181");
+    check(SCI_GETLENGTH == 2006, "msgnum/getlength-2006");
+    check(SCI_GETCURRENTPOS == 2008, "msgnum/getcurrentpos-2008");
+    check(SCI_GETANCHOR == 2009, "msgnum/getanchor-2009");
+    check(SCI_INDICSETSTYLE == 2080, "msgnum/indicsetstyle-2080");
+    check(SCI_INDICSETFORE == 2082, "msgnum/indicsetfore-2082");
+    check(SCI_INDICSETALPHA == 2523, "msgnum/indicsetalpha-2523");
+    check(SCI_INDICSETOUTLINEALPHA == 2558, "msgnum/indicsetoutlinealpha-2558");
+    check(SCI_SETINDICATORCURRENT == 2500, "msgnum/setindicatorcurrent-2500");
+    check(SCI_INDICATORFILLRANGE == 2504, "msgnum/indicatorfillrange-2504");
+    check(SCI_INDICATORCLEARRANGE == 2505, "msgnum/indicatorclearrange-2505");
+    check(SCN_UPDATEUI == 2007, "msgnum/updateui-2007");
+    check(SCN_DOUBLECLICK == 2006, "msgnum/doubleclick-2006");
+    check(INDIC_ROUNDBOX == 7, "msgnum/indic-roundbox-7");
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

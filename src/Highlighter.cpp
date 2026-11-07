@@ -29,11 +29,14 @@ int sciLength(HWND sci) {
 }
 
 // v1.0.3：取文档文本改用 SCI_GETTEXT，不再用 SCI_GETTEXTRANGE。
-// v1.0.2 的真机 diagnose 证明：SCI_GETLENGTH 返回 83（文档长度是对的），
-// 但 SCI_GETTEXTRANGE 写回的 83 个字节全是 \x00——Scintilla 什么都没写，
-// 插件根本没看到 SQL，所以 parseInsert 报 no-insert。GETLENGTH（无指针
-// 参数）能通、GETTEXTRANGE（结构体指针）不通，说明问题出在取文本这一步；
-// SCI_GETTEXT 只有一个普通 char* 参数，没有结构体，从根上绕开这个问题。
+// 根因（2026-11-08 对照官方头文件查出）：src/Scintilla.h 把
+// SCI_GETTEXTRANGE 的消息号抄错成 2166——2166 其实是 SCI_LINEFROMPOSITION，
+// 插件发的根本不是取文本消息，Scintilla 当然什么都不写，v1.0.2 真机日志
+// 里读回的 83 个字节全是 \x00，parseInsert 报 no-insert。结构体本身没错，
+// 错的是消息号；Linux 假测试用同一份头文件，错号对错号，全绿也没发现。
+// v1.0.3 两处改：消息号按 Scintilla 5.6.9 官方头文件逐个核对修正；
+// 取文本改走 SCI_GETTEXT（2182，核对无误），调用更简单，不再依赖
+// TextRange 结构体。
 std::string sciFullText(HWND sci) {
     const int docLen = sciLength(sci);
     if (docLen <= 0)
@@ -409,7 +412,7 @@ std::string diagnose(HWND sci, int pos) {
     char buf[1024];
     if (!statementAt(sci, pos, base, stmt)) {
         // statementAt 只在取不到文本时失败：docLen > 0 但文本为空，
-        // 说明 SCI_GETTEXT 也没取回东西（v1.0.2 的 GETTEXTRANGE 同款故障）。
+        // 说明 SCI_GETTEXT 也没取回东西（v1.0.2 是消息号抄错导致同款现象）。
         std::snprintf(buf, sizeof(buf),
                       "docLen=%d pos=%d stage=%s stmtLen=0",
                       docLen, pos,

@@ -2,6 +2,8 @@
 
 A Notepad++ plugin: in a SQL `INSERT` statement, **click a column name to highlight its value(s)**, and **double-click a value to highlight its column**.
 
+![Demo — click a column to highlight its values; double-click a value to highlight its column](docs/demo.gif)
+
 ```sql
 INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com');
 --               ^^^^  click "name"  ->  'Alice' is highlighted amber

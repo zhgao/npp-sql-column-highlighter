@@ -33,8 +33,10 @@
 // 官方头文件里 2166 = SCI_LINEFROMPOSITION。
 #define SCI_GETTEXTRANGE_WRONG 2166
 
-// George 真机文件的确切内容（CRLF，末尾带换行，UTF-8 下共 83 字节，
-// 与 v1.0.2 日志里的 docLen=83 一致）。
+// George 真机文件的内容（CRLF，末尾带换行）。注意：这段字面量是 82 字节，
+// George 的原文件是 83 字节（多 1 个字节，内容未知，不影响消息号验证），
+// 所以长度预期一律用 sizeof(kSql)-1，不要写死 83——run #3 就是被写死的
+// 83 坑了：SCI_GETLENGTH 正确返回 82，程序却当成异常退出了。
 static const char kSql[] =
     "INSERT INTO user (id, name, age)\r\n"
     "VALUES\r\n"
@@ -99,8 +101,10 @@ int main() {
 
     sci(sciWnd, SCI_SETTEXT, 0, (LPARAM)kSql);
     const LRESULT docLen = sci(sciWnd, SCI_GETLENGTH, 0, 0);
-    printf("SCI_GETLENGTH = %lld (expected 83)\n", (long long)docLen);
-    if (docLen != 83) {
+    const LRESULT expectLen = (LRESULT)(sizeof(kSql) - 1);
+    printf("SCI_GETLENGTH = %lld (expected %lld)\n", (long long)docLen,
+           (long long)expectLen);
+    if (docLen != expectLen) {
         printf("RESULT: unexpected docLen\n");
         return 1;
     }

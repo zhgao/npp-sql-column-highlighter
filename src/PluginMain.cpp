@@ -202,7 +202,7 @@ void highlightNow() {
 void showAbout() {
     TCHAR msg[1024];
     _stprintf_s(msg,
-                TEXT("SQL Column Highlighter v1.0.2\r\n")
+                TEXT("SQL Column Highlighter v1.0.3\r\n")
                 TEXT("\r\n")
                 TEXT("In an INSERT statement:\r\n")
                 TEXT("  - Click a column name  -> its value(s) are highlighted\r\n")

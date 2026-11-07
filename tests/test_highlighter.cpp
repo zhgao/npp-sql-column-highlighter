@@ -37,7 +37,24 @@ struct FakeSci {
         switch (msg) {
         case SCI_GETLENGTH:
             return (LRESULT)doc.size();
+        case SCI_GETTEXT: {
+            // v1.0.3：插件改用 SCI_GETTEXT 取整篇文档。wp 为缓冲区大小
+            // （含结尾 \0），返回写入的字符数（不含 \0）。
+            char* out = reinterpret_cast<char*>(lp);
+            const size_t cap = (size_t)wp;
+            size_t n = doc.size();
+            if (cap == 0)
+                return 0;
+            if (n > cap - 1)
+                n = cap - 1;
+            memcpy(out, doc.data(), n);
+            out[n] = '\0';
+            return (LRESULT)n;
+        }
         case SCI_GETTEXTRANGE: {
+            // v1.0.3 起插件不再调它；保留以防旧代码路径被测到。
+            // 注意：真机上它曾返回全 \x00（见 v1.0.3 说明），这里的 fake
+            // 故意不模拟那个故障——故障本身由真机复现程序验证。
             Sci_TextRange* tr = reinterpret_cast<Sci_TextRange*>(lp);
             int a = (int)tr->chrg.cpMin;
             int b = (int)tr->chrg.cpMax;
@@ -245,6 +262,24 @@ int main() {
         const std::string d2 = sqlhl::diagnose((HWND)1, 3);
         check(d2.find("no-insert") != std::string::npos,
               "diagnose/plain-text/no-insert");
+    }
+
+    // v1.0.3 回归：George 2026-11-08 真机日志——docLen=83 但
+    // SCI_GETTEXTRANGE 写回的 83 字节全是 \x00，stage=no-insert。
+    // 改走 SCI_GETTEXT 后，同一段 SQL 的 diagnose 预览必须出现真文本，
+    // 且 analyse 必须命中列。
+    {
+        FakeSci& f = theFake();
+        f.doc = tu;
+        const std::string d = sqlhl::diagnose((HWND)1, (int)tu.find("id") + 1);
+        check(d.find("INSERT INTO user") != std::string::npos,
+              "v103/gettext-preview-real-sql");
+        check(d.find("\\x00") == std::string::npos,
+              "v103/gettext-preview-no-nuls");
+        sqlhl::HitInfo hit;
+        check(sqlhl::analyse((HWND)1, (int)tu.find("id") + 1, hit) &&
+                  hit.isColumn && hit.colIdx == 0,
+              "v103/analyse-id-via-gettext");
     }
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);

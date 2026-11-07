@@ -20,7 +20,7 @@ namespace {
 
 int INDIC_VALUE = 8;    // 值的指示器：琥珀色（默认；v1.0.1 可由 setIndicators 改写）
 int INDIC_COLUMN = 9;   // 列名的指示器：蓝色（默认；v1.0.1 可由 setIndicators 改写）
-const int WINDOW = 20000;     // 在光标前后各取多少字节来定位语句
+// v1.0.3 起不再用窗口取文本（SCI_GETTEXT 一次取整篇文档），WINDOW 已删。
 
 typedef std::pair<int, int> Range;
 
@@ -28,16 +28,22 @@ int sciLength(HWND sci) {
     return (int)::SendMessage(sci, SCI_GETLENGTH, 0, 0);
 }
 
-std::string sciTextRange(HWND sci, int start, int end) {
-    if (end <= start)
+// v1.0.3：取文档文本改用 SCI_GETTEXT，不再用 SCI_GETTEXTRANGE。
+// v1.0.2 的真机 diagnose 证明：SCI_GETLENGTH 返回 83（文档长度是对的），
+// 但 SCI_GETTEXTRANGE 写回的 83 个字节全是 \x00——Scintilla 什么都没写，
+// 插件根本没看到 SQL，所以 parseInsert 报 no-insert。GETLENGTH（无指针
+// 参数）能通、GETTEXTRANGE（结构体指针）不通，说明问题出在取文本这一步；
+// SCI_GETTEXT 只有一个普通 char* 参数，没有结构体，从根上绕开这个问题。
+std::string sciFullText(HWND sci) {
+    const int docLen = sciLength(sci);
+    if (docLen <= 0)
         return std::string();
-    Sci_TextRange tr;
-    tr.chrg.cpMin = start;
-    tr.chrg.cpMax = end;
-    std::string buf((size_t)(end - start) + 1, '\0');
-    tr.lpstrText = &buf[0];
-    ::SendMessage(sci, SCI_GETTEXTRANGE, 0, reinterpret_cast<LPARAM>(&tr));
-    buf.resize((size_t)(end - start));
+    std::string buf((size_t)docLen + 1, '\0');
+    const LRESULT n = ::SendMessage(sci, SCI_GETTEXT, (WPARAM)(docLen + 1),
+                                    reinterpret_cast<LPARAM>(&buf[0]));
+    if (n <= 0)
+        return std::string();
+    buf.resize((size_t)n);
     return buf;
 }
 
@@ -142,19 +148,13 @@ std::vector<Range> splitTopLevel(const std::string& masked, int lo, int hi) {
 }
 
 // 取光标所在的整条语句：向前/向后找到顶层分号为界。
+// 文本取的是整篇文档（SCI_GETTEXT 一次取回），下标即文档绝对下标。
 bool statementAt(HWND sci, int pos, int& baseOut, std::string& stmtOut) {
-    const int docLen = sciLength(sci);
-    int start = pos - WINDOW;
-    if (start < 0)
-        start = 0;
-    int end = pos + WINDOW;
-    if (end > docLen)
-        end = docLen;
-    const std::string text = sciTextRange(sci, start, end);
+    const std::string text = sciFullText(sci);
     if (text.empty())
         return false;
     const std::string masked = maskText(text);
-    const int rel = pos - start;
+    const int rel = pos;
     int prev = -1, nxt = -1;
     for (int i = 0; i < (int)masked.size(); ++i) {
         if (masked[i] == ';') {
@@ -166,7 +166,7 @@ bool statementAt(HWND sci, int pos, int& baseOut, std::string& stmtOut) {
     }
     const int s0 = (prev == -1) ? 0 : prev + 1;
     const int s1 = (nxt == -1) ? (int)text.size() : nxt + 1;
-    baseOut = start + s0;
+    baseOut = s0;
     stmtOut = text.substr((size_t)s0, (size_t)(s1 - s0));
     return true;
 }
@@ -408,9 +408,12 @@ std::string diagnose(HWND sci, int pos) {
     std::string stmt;
     char buf[1024];
     if (!statementAt(sci, pos, base, stmt)) {
+        // statementAt 只在取不到文本时失败：docLen > 0 但文本为空，
+        // 说明 SCI_GETTEXT 也没取回东西（v1.0.2 的 GETTEXTRANGE 同款故障）。
         std::snprintf(buf, sizeof(buf),
-                      "docLen=%d pos=%d stage=no-statement stmtLen=0",
-                      docLen, pos);
+                      "docLen=%d pos=%d stage=%s stmtLen=0",
+                      docLen, pos,
+                      docLen > 0 ? "gettext-empty" : "no-statement");
         return std::string(buf);
     }
     Parsed p;

@@ -7,6 +7,8 @@
 #include <cstdint>
 
 #define SCI_GETTEXTRANGE 2166
+#define SCI_GETTEXT 2182
+#define SCI_SETTEXT 2181
 #define SCI_GETLENGTH 2006
 #define SCI_GETCURRENTPOS 2008
 #define SCI_GETANCHOR 2009
